@@ -22,7 +22,7 @@ connection = None
 
 # Подключаем логирование
 logging.basicConfig(
-    filename="log.log", format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    filename='log.log', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
 #logger = logging.getLogger(__name__)
@@ -69,13 +69,15 @@ def findPhoneNumbers (update: Update, context):
         update.message.reply_text('Телефонные номера не найдены')
         return # Завершаем выполнение функции
     
+    uniquePhoneNumbers = list(set(phoneNumberList))  # Удаляем дубликаты номеров телефонов
+    
     phoneNumbers = '' # Создаем строку, в которую будем записывать номера телефонов
-    for i in range(len(phoneNumberList)):
-        phoneNumbers += f'{i+1}. {phoneNumberList[i]}\n' # Записываем очередной номер
+    for i in range(len(uniquePhoneNumbers)):
+        phoneNumbers += f'{i+1}. {uniquePhoneNumbers[i]}\n' # Записываем очередной номер
         
-    logging.debug(f"Найденные номера: {phoneNumberList}")
+    logging.debug(f"Найденные номера: {uniquePhoneNumbers}")
     update.message.reply_text(f"Найденные номера:\n{phoneNumbers}\nДобавить их в базу? (y/n)") # Отправляем сообщение пользователю
-    foundNumbers = list(phoneNumberList)
+    foundNumbers = list(uniquePhoneNumbers)
     
     return 'add_to_db'
 
@@ -84,7 +86,7 @@ def findEmail (update: Update, context):
     user_input = update.message.text # Получаем текст
 
     logging.info("Вызвана функция поиска имейлов")
-    EmailRegex = re.compile(r'[a-zA-Z0-9._-]+@[a-zA-Z-.]+\.[a-z]+') # формат
+    EmailRegex = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}') # формат
 
     EmailList = EmailRegex.findall(user_input) # Ищем 
 
@@ -92,13 +94,15 @@ def findEmail (update: Update, context):
         update.message.reply_text('Email-адреса не найдены')
         return # Завершаем выполнение функции
     
+    uniqueEmails = list(set(EmailList))  # Удаляем дубликаты email-адресов
+    
     emails = '' 
-    for i in range(len(EmailList)):
-        emails += f'{i+1}. {EmailList[i]}\n' 
+    for i in range(len(uniqueEmails)):
+        emails += f'{i+1}. {uniqueEmails[i]}\n' 
         
-    logging.debug(f"Найденные имейлы: {EmailList}")
+    logging.debug(f"Найденные имейлы: {uniqueEmails}")
     update.message.reply_text(f"Найденные имейлы:\n{emails}\nДобавить их в базу? (y/n)") # Отправляем сообщение пользователю
-    foundEmails = list(EmailList)
+    foundEmails = list(uniqueEmails)
     
     return 'add_to_db'
 
