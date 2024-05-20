@@ -1,0 +1,280 @@
+---
+- name: db playbook
+  hosts: db_host
+  become: yes
+  tasks:
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install PostgreSQL and dependencies
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - jq
+          - python3-psycopg2
+        state: present
+
+    - name: Create pg_data directory
+      ansible.builtin.file:
+        path: /oracle/pg_data/archive/
+        owner: postgres
+        group: postgres
+        state: directory
+
+    - name: Get pg_hba
+      ansible.builtin.shell: "pg_lsclusters --json | jq -r '.[].config.hba_file'"
+      register: pg_hba_path
+
+    - name: Get pg_conf
+      ansible.builtin.shell: "pg_lsclusters --json | jq -r '.[].configdir'"
+      register: pg_conf_path
+
+    - name: Setup pg_hba.conf
+      ansible.builtin.blockinfile:
+        create: true
+        path: "{{pg_hba_path.stdout}}"
+        block: |
+          local all all peer
+          host all all 0.0.0.0/0 password
+          host replication {{ DB_REPL_USER }} {{ DB_REPL_HOST }}/24 trust
+      become: yes
+
+    - name: Configure PostgreSQL for replication
+      ansible.builtin.blockinfile:
+        create: true
+        path: "{{ pg_conf_path.stdout }}/postgresql.conf"
+        block: |
+          listen_addresses = '*'
+          port = {{DB_PORT}}
+          wal_level = replica
+          hot_standby = on
+          max_wal_senders = 10
+          max_replication_slots = 10
+          hot_standby_feedback = on
+          archive_mode = on
+          archive_command = 'cp %p /oracle/pg_data/archive/%f'
+          log_replication_commands = on
+          logging_collector = on
+          log_directory = '/var/log/postgresql'
+          log_filename = 'postgresql.log'
+      become: yes
+
+    - name: Restart PostgreSQL to apply pg_hba.conf changes
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted
+
+    - name: Change postgres user password
+      community.postgresql.postgresql_user:
+        name: "postgres"
+        password: "{{ DB_PASSWORD }}"
+      become: yes
+      become_user: postgres
+
+    - name: Ensure the database exists
+      community.postgresql.postgresql_db:
+        name: "{{ DB_DATABASE }}"
+      become: yes
+      become_user: postgres
+
+    - name: Create replication user
+      community.postgresql.postgresql_user:
+        name: "{{DB_REPL_USER}}"
+        password: "{{DB_REPL_PASSWORD}}"
+        role_attr_flags: REPLICATION,LOGIN
+      become: yes
+      become_user: postgres
+
+    - name: Create replication slot
+      community.postgresql.postgresql_query:
+        db: "{{ DB_DATABASE }}"
+        query: "SELECT pg_create_physical_replication_slot('replication_slot');"
+      ignore_errors: yes
+      register: create_slot
+      become_user: postgres
+
+    - name: Handle slot already exists error
+      debug:
+        msg: "Replication slot 'replication_slot' already exists. Skipping creation."
+      when: create_slot.failed and "already exists" in create_slot.msg
+
+    - name: Create phone table if not exists
+      community.postgresql.postgresql_query:
+        db: "{{ DB_DATABASE }}"
+        query: |
+          CREATE TABLE IF NOT EXISTS number(
+              id SERIAL PRIMARY KEY,
+              phone VARCHAR(20)
+          );
+      become: yes
+      become_user: postgres
+
+    - name: Create email table if not exists
+      community.postgresql.postgresql_query:
+        db: "{{ DB_DATABASE }}"
+        query: |
+          CREATE TABLE IF NOT EXISTS mail(
+              id SERIAL PRIMARY KEY,
+              email VARCHAR(255)
+          );
+      become: yes
+      become_user: postgres
+
+    - name: Enable PostgreSQL service
+      ansible.builtin.service:
+        name: postgresql
+        enabled: yes
+        state: restarted
+      become: yes
+
+
+- name: db repl playbook
+  hosts: db_repl_host
+  become: yes
+  tasks:
+    - name: Install PostgreSQL
+      become: yes
+      apt:
+        pkg:
+          - postgresql
+          - postgresql-contrib
+          - libpq-dev
+          - python3-psycopg2
+        state: latest
+        update_cache: true
+
+    - name: start postgresql
+      become: yes
+      service:
+        name: postgresql
+        state: started
+
+    - name: set parameters
+      become_user: postgres
+      become: yes
+      community.postgresql.postgresql_set:
+        name: "listen_addresses"
+        value: "*"
+
+    - name: stop postgresql
+      become: yes
+      service:
+        name: postgresql
+        state: stopped
+
+
+    - name: Clean PostgreSQL data directory
+      file:
+        path: /var/lib/postgresql/data/
+        state: absent
+      become_user: root
+
+    - name: Run pg_basebackup to initialize replication
+      shell: until pg_basebackup -v --pgdata=/var/lib/postgresql/data/ -R --slot=replication_slot --host={{ DB_HOST }} --port={{ DB_PORT }} -U {{ DB_REPL_USER }}; do echo 'Waiting for primary to connect...'; sleep 1; done
+      become_user: postgres
+      environment:
+        PGUSER: "{{ DB_REPL_USER }}"
+        PGPASSWORD: "{{ DB_REPL_PASSWORD }}"
+        PGDATA: "/var/lib/postgresql/data/"
+
+    - name: Change ownership and permissions of PostgreSQL data directory
+      file:
+        path: /var/lib/postgresql/data/
+        owner: postgres
+        group: postgres
+        mode: '0700'
+      become: yes
+
+    - name: start postgresql
+      become: yes
+      service:
+        name: postgresql
+        state: started
+
+
+- name: bot playbook
+  hosts: bot_host
+  become: yes
+  tasks:
+    - name: Create workdir
+      ansible.builtin.file:
+        path: /srv/devops_bot
+        owner: "{{ RM_USER }}"
+        group: "{{ RM_USER }}"
+        state: directory
+        mode: '0777'
+
+    - name: Create logs dir
+      ansible.builtin.file:
+        path: /srv/devops_bot/logs
+        owner: "{{ RM_USER }}"
+        group: "{{ RM_USER }}"
+        state: directory
+        mode: '0777'
+
+    - name: Update APT cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - postgresql-client
+          - systemd
+          - python3
+          - python3-pip
+          - python3-dev
+        state: present
+
+    - name: Install Python dependencies
+      pip:
+        name:
+          - APScheduler==3.6.3
+          - bcrypt==4.1.3
+          - cachetools==4.2.2
+          - certifi==2024.2.2
+          - cffi==1.16.0
+          - cryptography==42.0.7
+          - paramiko==3.4.0
+          - psycopg2-binary==2.9.9
+          - pycparser==2.22
+          - PyNaCl==1.5.0
+          - python-dotenv==1.0.1
+          - python-telegram-bot==13.7
+          - pytz==2024.1
+          - six==1.16.0
+          - tornado==6.4
+          - tzlocal==5.2
+
+    - name: Get bot from GitHub
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/saderiek/TgBot/docker/bot/bot.py
+        dest: /srv/devops_bot/bot.py
+        mode: '0755'
+
+    - name: Update log file path in bot.py
+      ansible.builtin.replace:
+        path: /srv/devops_bot/bot.py
+        regexp: "filename='log.log'"
+        replace: "filename='/srv/devops_bot/logs/log.log'"
+
+
+    - name: Execute bot
+      ansible.builtin.command:
+        cmd: python3 /srv/devops_bot/bot.py
+      environment:
+        TOKEN: "{{ TOKEN }}"
+        HOST: "{{ RM_HOST }}"
+        PORT: "{{ RM_PORT }}"
+        USER: "{{ RM_USER }}"
+        PASSWORD: "{{ RM_PASSWORD }}"
+        BD_HOST: "{{ DB_HOST }}"
+        BD_PORT: "{{ DB_PORT }}"
+        BD_USER: "{{ DB_USER }}"
+        BD_PASS: "{{ DB_PASSWORD }}"
+        BD_NAME: "{{ DB_DATABASE }}"
+        REPL_USER: "{{ DB_REPL_USER }}"
+        REPL_PASS: "{{ DB_REPL_PASSWORD }}"
