@@ -2,9 +2,6 @@ FROM postgres:latest
 
 RUN rm -rf db-data/*
 
-RUN mkdir -p /var/lib/postgres/data
-RUN chown 999:999 /var/lib/postgresql/data
-
 RUN mkdir -p /var/log/postgres/
 RUN touch /var/log/postgres/postgres.log
 RUN chmod 777 /var/log/postgres/postgres.log
