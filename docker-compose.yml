@@ -45,9 +45,6 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_HOST_AUTH_METHOD: "scram-sha-256\nhost replication all 0.0.0.0/0 md5\nhost replication ${DB_REPL_USER} 0.0.0.0/0 trust"
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
-    volumes:
-      - ./db-data:/var/lib/postgresql/data
-      #- ./psql-logs:/var/log/postgres
     command: |
       postgres
       -c wal_level=replica
