@@ -201,16 +201,16 @@
     - name: Create workdir
       ansible.builtin.file:
         path: /srv/devops_bot
-        owner: "{{ RM_USER }}"
-        group: "{{ RM_USER }}"
+        #owner: "{{ RM_USER }}"
+        #group: "{{ RM_USER }}"
         state: directory
         mode: '0777'
 
     - name: Create logs dir
       ansible.builtin.file:
         path: /srv/devops_bot/logs
-        owner: "{{ RM_USER }}"
-        group: "{{ RM_USER }}"
+        #owner: "{{ RM_USER }}"
+        #group: "{{ RM_USER }}"
         state: directory
         mode: '0777'
 
