@@ -4,15 +4,15 @@ x-postgres-common:
   &postgres-common
   restart: always
   healthcheck:
-    test: 'pg_isready -U postgres --dbname=mydb'
+    test: 'pg_isready -U postgres --dbname=${DB_DATABASE}'
     interval: 10s
     timeout: 5s
     retries: 5
 
 services:
   bot:
-    #build: ./bot_dir
-    image: 192.168.75.188:5000/bot_image
+    build: ./bot
+    image: bot_image
     container_name: bot_image
     networks:
       - custom_net
@@ -34,59 +34,59 @@ services:
   db:
     <<: *postgres-common
     user: ${DB_USER}
-    image: 192.168.75.188:5000/db_image
+    image: db_image
     ports:
-      - 5432:5432
-          # build: ./db_dir
-          container_name: db_image
-          environment:
-            POSTGRES_USER: ${DB_USER}
-            POSTGRES_DB: postgres
-            POSTGRES_PASSWORD: ${DB_PASSWORD}
-            POSTGRES_HOST_AUTH_METHOD: "scram-sha-256\nhost replication all 0.0.0.0/0 md5\nhost replication replicator 0.0.0.0/0 trust"
-            POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
-          volumes:
-            - ./db-data:/var/lib/postgresql/data
-            #- ./psql-logs:/var/log/postgres
-          command: |
-            postgres
-            -c wal_level=replica
-            -c hot_standby=on
-            -c max_wal_senders=10
-            -c max_replication_slots=10
-            -c hot_standby_feedback=on
-            -c logging_collector=on
-            -c log_replication_commands=on
-          networks:
-            - custom_net
-        db-repl:
-          image: 192.168.75.188:5000/db_repl_image
-          #build: ./db_repl_dir
-          user: ${DB_USER}
-          container_name: db_repl_image
-          <<: *postgres-common
-          ports:
-            - 5433:5432
-          environment:
-            PGUSER: ${DB_REPL_USER}
-            PGPASSWORD: ${DB_REPL_PASSWORD}
-          command: |
-            bash -c "
-                  rm -rf /var/lib/postgresql/data/*
-                  until pg_basebackup --pgdata=/var/lib/postgresql/data -R --slot=replication_slot --host=db --port=5432
-                  do
-                  echo 'Waiting for primary to connect...'
-                  sleep 5s
-                  done
-                  echo 'Backup done, starting replica...'
-                  chmod 0700 /var/lib/postgresql/data
-                  postgres
-                  "
-                networks:
-                  - custom_net
-                depends_on:
-                  - db
+      - ${DB_PORT}:${DB_PORT}
+    build: ./db
+    container_name: db_image
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256\nhost replication all 0.0.0.0/0 md5\nhost replication ${DB_REPL_USER} 0.0.0.0/0 trust"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - ./db-data:/var/lib/postgresql/data
+      #- ./psql-logs:/var/log/postgres
+    command: |
+      postgres
+      -c wal_level=replica
+      -c hot_standby=on
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby_feedback=on
+      -c logging_collector=on
+      -c log_replication_commands=on
+    networks:
+      - custom_net
+  db-repl:
+    image: db_repl_image
+    build: ./db_repl
+    user: ${DB_USER}
+    container_name: db_repl_image
+    <<: *postgres-common
+    ports:
+      - ${DB_REPL_PORT}:${DB_PORT}
+    environment:
+      PGUSER: ${DB_REPL_USER}
+      PGPASSWORD: ${DB_REPL_PASSWORD}
+    command: |
+      bash -c "
+      rm -rf /var/lib/postgresql/data/*
+      until pg_basebackup --pgdata=/var/lib/postgresql/data -R --slot=replication_slot --host=db --port=${DB_PORT}
+      do
+      echo 'Waiting for primary to connect...'
+      sleep 5s
+      done
+      echo 'Backup done, starting replica...'
+      chmod 0700 /var/lib/postgresql/data
+      postgres
+      "
+    networks:
+      - custom_net
+    depends_on:
+      - db
 
-            networks:
-              custom_net:
-                driver: bridge
+networks:
+  custom_net:
+    driver: bridge
